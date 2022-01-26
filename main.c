@@ -16,6 +16,63 @@ struct command
     struct command *next;
 };
 
+
+struct command *createCommand(char *arg)
+{
+    struct command *currCommand = malloc(sizeof(struct command));
+
+    currCommand->argument = calloc(strlen(arg) + 1, sizeof(char));
+    strcpy(currCommand->argument, arg);
+
+    currCommand->next = NULL;
+
+    return currCommand;
+}
+
+struct command *parseInput(char userInput[])
+{
+    // printf("%s\n", userInput);
+    struct command *head = NULL;
+    struct command *tail = NULL;
+
+    char *arg = strtok(userInput, " ");
+
+    while (arg != NULL) {
+        struct command *newArg = createCommand(arg);
+        if (head == NULL) 
+        {
+            head = newArg;
+            tail = newArg;
+        } 
+        else
+        {
+            tail->next = newArg;
+            tail = newArg;
+        }
+        arg = strtok(NULL, " ");
+    }
+    return head;
+}
+
+
+void printArgs(struct command *current) 
+{
+    while(current!= NULL) {
+        printf("%s\n", current->argument);
+        fflush(stdout);
+        current = current->next;
+    }
+}
+
+void freeCommand(struct command *head)
+{
+    while (head != NULL) {
+        free(head->argument);
+        free(head);
+        head = head->next;
+    }
+}
+
 int main()
 {
     char userInput[2048];
@@ -39,13 +96,11 @@ int main()
             break;
         }
 
-        printf("%s\n", userInput);
-        // commandPrompt = parseInput(userInput, argumentsArray);
-        // bool valid = checkValid(commandPrompt);
-        // if (!valid) {continue;}
-        // printArgs(commandPrompt);
+        commandPrompt = parseInput(userInput);
+
+        printArgs(commandPrompt);
         
     }
-    // freeCommand(commandPrompt);
+    freeCommand(commandPrompt);
     return EXIT_SUCCESS;
 }

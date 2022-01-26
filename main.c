@@ -16,7 +16,6 @@ struct command
     struct command *next;
 };
 
-
 struct command *createCommand(char *arg)
 {
     struct command *currCommand = malloc(sizeof(struct command));
@@ -29,7 +28,7 @@ struct command *createCommand(char *arg)
     return currCommand;
 }
 
-struct command *parseInput(char userInput[])
+struct command *parseInput(char userInput[], char argumentsArray[])
 {
     // printf("%s\n", userInput);
     struct command *head = NULL;
@@ -38,6 +37,7 @@ struct command *parseInput(char userInput[])
     char *arg = strtok(userInput, " ");
 
     while (arg != NULL) {
+        if (strstr(arg, "$$") != NULL) {printf("Found the replacement string!\n");}
         struct command *newArg = createCommand(arg);
         if (head == NULL) 
         {
@@ -53,7 +53,6 @@ struct command *parseInput(char userInput[])
     }
     return head;
 }
-
 
 void printArgs(struct command *current) 
 {
@@ -73,31 +72,40 @@ void freeCommand(struct command *head)
     }
 }
 
+bool checkValid(struct command *head)
+{
+    if (head == NULL) {return false;}
+        
+    char *firstArg = head->argument;
+    // printf("%c\n", firstArg[0]);
+    if (firstArg[0] == '#') {
+        return false;
+    }
+    return true;
+}
 int main()
 {
     char userInput[2048];
+    char argumentsArray[512];
     struct command *commandPrompt;
     
     while (1) {
         char *buf;
         size_t buflen;
-
-        printf(": "); // input prompt
+        printf(": ");
         fflush(stdout);
         getline(&buf, &buflen, stdin);
 
-        buf[strlen(buf)-1] = '\0'; // remove extra new line character at the end
+        buf[strlen(buf)-1] = '\0';
         memset(userInput, '\0', 2048);
         strcpy(userInput, buf);
-
-        // Quick and easy way to end program without having to manually kill it
         if (strcmp(userInput, "break") == 0) {
             free(buf);
             break;
         }
-
-        commandPrompt = parseInput(userInput);
-
+        commandPrompt = parseInput(userInput, argumentsArray);
+        bool valid = checkValid(commandPrompt);
+        if (!valid) {continue;}
         printArgs(commandPrompt);
         
     }

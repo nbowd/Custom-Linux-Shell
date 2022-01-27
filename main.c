@@ -15,20 +15,64 @@ struct command
     char *argument;
     struct command *next;
 };
+// Citation for the following function:
+// Date: 01/20/2022
+// Copied from /OR/ Adapted from /OR/ Based on:
+// Source: https://stackoverflow.com/questions/8257714/how-to-convert-an-int-to-string-in-c
+// Source: https://www.youtube.com/watch?v=0qSU0nxIZiE&ab_channel=CodeVault
 
-struct command *createCommand(char *arg)
+void expandVar(char *source, char *substring, pid_t with)
+{
+    // Create temp storage for substring 
+    int length = snprintf(NULL, 0, "%d", with);
+    char *str = malloc(length + 1);
+    
+    // Convert pid int to string and store in temp
+    snprintf(str, length + 1, "%d", with);
+    
+    // Locates expansion starting point
+    char *substring_source = strstr(source, substring);
+
+    // Handles invalid strings
+    if (substring_source == NULL) {
+        return;
+    }
+
+    // Moves the characters after the substring over to make room for the new substring expansion
+    // This will leave a hole in the string that will be the right size for the new substring
+    memmove(
+        substring_source + strlen(str),
+        substring_source + strlen(substring),
+        strlen(substring_source) - strlen(substring) + 1
+    );
+
+    memcpy(substring_source, str, strlen(str));
+    free(str);
+}
+
+struct command *createCommand(char *arg, pid_t currentPid)
 {
     struct command *currCommand = malloc(sizeof(struct command));
+    // Creates a new string allocation that is large enough to contain the expansion if needed
+    int pidLength = snprintf(NULL, 0, "%d", currentPid);
+    char *newArg = calloc(strlen(arg) + pidLength - 1, sizeof(char));
+    strcpy(newArg, arg);    
+    
+    // Modifies newArg to reflect the expanded argument
+    if (strstr(arg, "$$") != NULL) {
+        expandVar(newArg, "$$", currentPid);
+    }
 
-    currCommand->argument = calloc(strlen(arg) + 1, sizeof(char));
-    strcpy(currCommand->argument, arg);
-
+    currCommand->argument = calloc(strlen(newArg) + 1, sizeof(char));
+    strcpy(currCommand->argument, newArg);   
     currCommand->next = NULL;
-
+    
+    free(newArg);
     return currCommand;
 }
 
-struct command *parseInput(char userInput[], char argumentsArray[])
+
+struct command *parseInput(char userInput[], pid_t currentPid)
 {
     // printf("%s\n", userInput);
     struct command *head = NULL;
@@ -37,8 +81,11 @@ struct command *parseInput(char userInput[], char argumentsArray[])
     char *arg = strtok(userInput, " ");
 
     while (arg != NULL) {
-        if (strstr(arg, "$$") != NULL) {printf("Found the replacement string!\n");}
-        struct command *newArg = createCommand(arg);
+        // if (strstr(arg, "$$") != NULL) {
+        //     expandVar(arg, "$$", getpid());
+        //     // printf("Found the replacement string!\n");
+        //     }
+        struct command *newArg = createCommand(arg, currentPid);
         if (head == NULL) 
         {
             head = newArg;
@@ -86,7 +133,7 @@ bool checkValid(struct command *head)
 int main()
 {
     char userInput[2048];
-    char argumentsArray[512];
+    pid_t pid = getpid();
     struct command *commandPrompt;
     
     while (1) {
@@ -103,7 +150,7 @@ int main()
             free(buf);
             break;
         }
-        commandPrompt = parseInput(userInput, argumentsArray);
+        commandPrompt = parseInput(userInput, pid);
         bool valid = checkValid(commandPrompt);
         if (!valid) {continue;}
         printArgs(commandPrompt);

@@ -130,14 +130,35 @@ bool checkValid(struct command *head)
     }
     return true;
 }
+
+void changeDirectory(struct command *current, char HOME[]) 
+{
+    // Advances past cd command, checks for an argument
+    current = current->next;
+    
+    // No argument, navigates to HOME directory
+    if (current == NULL) {
+        chdir(HOME);
+        return;
+    }
+
+    // Displays error if argument is an invalid directory, 
+    // Changes directories on valid argument.
+    if (chdir(current->argument) != 0) {
+        perror("Invalid argument, cd not executed");
+    }
+}
+
 int main()
 {
     char userInput[2048];
+    char HOME[] = "/nfs/stak/users/bowdenn";
     pid_t pid = getpid();
     struct command *commandPrompt;
-    
+    int exitStatus = 0;
+
     while (1) {
-        char *buf;
+        char *buf = NULL;
         size_t buflen;
         printf(": ");
         fflush(stdout);
@@ -146,16 +167,28 @@ int main()
         buf[strlen(buf)-1] = '\0';
         memset(userInput, '\0', 2048);
         strcpy(userInput, buf);
-        if (strcmp(userInput, "break") == 0) {
-            free(buf);
+        free(buf);
+
+        if (strcmp(userInput, "exit") == 0) {
             break;
         }
+
+        if (strcmp(userInput, "status") == 0) {
+            printf("exit status %d\n", exitStatus);
+            continue;
+        }
+
         commandPrompt = parseInput(userInput, pid);
         bool valid = checkValid(commandPrompt);
         if (!valid) {continue;}
+
+        if (strcmp(userInput, "cd") == 0) {
+            changeDirectory(commandPrompt, HOME);
+        }
         printArgs(commandPrompt);
         
     }
     freeCommand(commandPrompt);
+    exit(0);
     return EXIT_SUCCESS;
 }

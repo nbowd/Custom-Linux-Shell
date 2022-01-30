@@ -8,6 +8,7 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <sys/wait.h> // for waitpid
 
 struct command 
 {
@@ -135,10 +136,14 @@ void changeDirectory(struct command *current, char HOME[])
 {
     // Advances past cd command, checks for an argument
     current = current->next;
-    
+    char dir[256];
+    getcwd(dir, sizeof(dir));
+    printf("%s\n", dir);
     // No argument, navigates to HOME directory
     if (current == NULL) {
         chdir(HOME);
+        getcwd(dir, sizeof(dir));
+        printf("%s\n", dir);
         return;
     }
 
@@ -147,8 +152,30 @@ void changeDirectory(struct command *current, char HOME[])
     if (chdir(current->argument) != 0) {
         perror("Invalid argument, cd not executed");
     }
+    getcwd(dir, sizeof(dir));
+    printf("%s\n", dir);
 }
 
+int countArgs(struct command *head) 
+{
+    int count = 0;
+    
+    while (head != NULL) {
+        count++;
+        head = head->next;
+    }
+    return count;
+}
+
+void listToArr(struct command *current, char **list)
+{   
+    int i = 0;
+    while (current != NULL) {
+        list[i] = current->argument;
+        i++;
+        current = current->next;
+    }
+}
 int main()
 {
     char userInput[2048];
@@ -168,24 +195,71 @@ int main()
         memset(userInput, '\0', 2048);
         strcpy(userInput, buf);
         free(buf);
-
-        if (strcmp(userInput, "exit") == 0) {
+        if (strcmp(userInput, "exit") == 0 || strcmp(userInput, "exit &") == 0) {
             break;
         }
 
-        if (strcmp(userInput, "status") == 0) {
+        if (strcmp(userInput, "status") == 0 || strcmp(userInput, "status &") == 0) {
             printf("exit status %d\n", exitStatus);
             continue;
         }
 
+        // Parses the command and arguments into a linked list inside the command struct
         commandPrompt = parseInput(userInput, pid);
         bool valid = checkValid(commandPrompt);
         if (!valid) {continue;}
 
+        // After parsing, only the command is left inside userInput.
+        // This is why "cd <some file path" still triggers this condition
         if (strcmp(userInput, "cd") == 0) {
             changeDirectory(commandPrompt, HOME);
+            continue;
         }
-        printArgs(commandPrompt);
+        // printArgs(commandPrompt);
+        int argCount = countArgs(commandPrompt);
+        printf("arg count: %d\n", argCount);
+        char *args[argCount+1];
+        args[argCount] = NULL;
+
+        // int childStatus;
+
+        // Fork a new process
+        pid_t spawnPid = fork();
+
+        switch(spawnPid){
+        case -1:
+            perror("fork()\n");
+            exit(1);
+            break;
+        case 0:
+            // In the child process
+            printf("CHILD(%d) running\n", getpid());
+
+            listToArr(commandPrompt, args);
+            
+            for (int i=0; i < argCount; i++) {
+                printf("%s, ", args[i]);
+            }
+            printf("NULL\n");
+            printf("argument run: %s\n", args[0]);
+            // // Replace the current program with "/bin/ls"
+            // execl("/bin/ls", "/bin/ls", "-al", NULL);
+
+            execvp(args[0], args);
+    
+            // exec only returns if there is an error
+            perror("execvp");
+            exitStatus = -1;
+            exit(2);
+            break;
+        default:
+            // In the parent process
+            // Wait for child's termination
+            spawnPid = waitpid(spawnPid, &exitStatus, 0);
+            printf("PARENT(%d): child(%d) terminated. Exiting\n", getpid(), spawnPid);
+            // exit(0);
+            // break;
+        }
         
     }
     freeCommand(commandPrompt);

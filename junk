@@ -1,0 +1,7 @@
+ls, >, junk, NULL
+argument run: ls
+junk
+main.c
+Makefile
+p3testscript
+smallsh

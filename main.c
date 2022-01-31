@@ -176,6 +176,8 @@ void listToArr(struct command *current, char **list)
         current = current->next;
     }
 }
+
+// source for redirect: https://canvas.oregonstate.edu/courses/1884946/pages/exploration-processes-and-i-slash-o?module_item_id=21835982
 int main()
 {
     char userInput[2048];
@@ -183,6 +185,9 @@ int main()
     pid_t pid = getpid();
     struct command *commandPrompt;
     int exitStatus = 0;
+    int targetFD = -5;
+    int sourceFD = -5;
+    bool redirect = false;
 
     while (1) {
         char *buf = NULL;
@@ -239,11 +244,51 @@ int main()
             
             for (int i=0; i < argCount; i++) {
                 printf("%s, ", args[i]);
+
+                // stdin redirection
+                if (strcmp(args[i], "<") == 0) {
+                    redirect = true;
+
+                    sourceFD = open(args[i+1], O_RDONLY);
+                    if (sourceFD == -1) {
+                        perror("source open()");
+                        exit(1);
+                    }
+
+                    int result = dup2(sourceFD, 0); // 0 == stdin
+                    if (result == -1) {
+                        perror("source dup2()");
+                        exit(2);
+                    } 
+                }
+
+                // stdout redirection
+                if (strcmp(args[i], ">") == 0) {
+                    redirect = true;
+
+                    targetFD = open(args[i+1], O_WRONLY | O_CREAT | O_TRUNC, 0644);
+                    if (targetFD == -1) {
+                        perror("source open()");
+                        exit(1);
+                    }
+
+                    int result = dup2(targetFD, 1); // 1 == stdout
+                    if (result == -1) {
+                        perror("source dup2()");
+                        exit(2);
+                    } 
+                }
             }
+
             printf("NULL\n");
             printf("argument run: %s\n", args[0]);
             // // Replace the current program with "/bin/ls"
             // execl("/bin/ls", "/bin/ls", "-al", NULL);
+            if (redirect) {
+                for ( int i = 1; i < argCount; i++) {
+                    args[i] = NULL;
+                }
+            }
 
             execvp(args[0], args);
     

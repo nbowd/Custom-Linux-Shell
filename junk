@@ -1,6 +1,5 @@
-ls, >, junk, NULL
-argument run: ls
 junk
+junk2
 main.c
 Makefile
 p3testscript

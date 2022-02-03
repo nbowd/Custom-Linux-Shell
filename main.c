@@ -16,6 +16,12 @@ struct command
     char *argument;
     struct command *next;
 };
+
+struct bgPids 
+{
+    pid_t spawnPid;
+    struct bgPids *next;
+};
 // Citation for the following function:
 // Date: 01/20/2022
 // Copied from /OR/ Adapted from /OR/ Based on:
@@ -122,11 +128,15 @@ void freeCommand(struct command *head)
 
 bool checkValid(struct command *head)
 {
-    if (head == NULL) {return false;}
+    if (head == NULL) {
+        printf("\n");
+        return false;
+    }
         
     char *firstArg = head->argument;
     // printf("%c\n", firstArg[0]);
     if (firstArg[0] == '#') {
+        printf("\n");
         return false;
     }
     return true;
@@ -136,14 +146,14 @@ void changeDirectory(struct command *current, char HOME[])
 {
     // Advances past cd command, checks for an argument
     current = current->next;
-    char dir[256];
-    getcwd(dir, sizeof(dir));
-    printf("%s\n", dir);
+    // char dir[256];
+    // getcwd(dir, sizeof(dir));
+    // printf("%s\n", dir);
     // No argument, navigates to HOME directory
     if (current == NULL) {
         chdir(HOME);
-        getcwd(dir, sizeof(dir));
-        printf("%s\n", dir);
+        // getcwd(dir, sizeof(dir));
+        // printf("%s\n", dir);
         return;
     }
 
@@ -152,8 +162,8 @@ void changeDirectory(struct command *current, char HOME[])
     if (chdir(current->argument) != 0) {
         perror("Invalid argument, cd not executed");
     }
-    getcwd(dir, sizeof(dir));
-    printf("%s\n", dir);
+    // getcwd(dir, sizeof(dir));
+    // printf("%s\n", dir);
 }
 
 int countArgs(struct command *head) 
@@ -177,17 +187,32 @@ void listToArr(struct command *current, char **list)
     }
 }
 
+struct bgPids *createPidNode(pid_t pid)
+{
+    struct bgPids *currPid = malloc(sizeof(struct bgPids));
+    currPid->spawnPid = pid;
+    currPid->next = NULL;
+
+    return currPid;
+}
+
 // source for redirect: https://canvas.oregonstate.edu/courses/1884946/pages/exploration-processes-and-i-slash-o?module_item_id=21835982
 int main()
 {
     char userInput[2048];
     char HOME[] = "/nfs/stak/users/bowdenn";
     pid_t pid = getpid();
+    pid_t childPid;
     struct command *commandPrompt;
-    int exitStatus = 0;
+    int childExitMethod = 0;
     int targetFD = -5;
     int sourceFD = -5;
-    bool redirect = false;
+    bool targetRedirect = false;
+    bool sourceRedirect = false;
+    bool background = false;
+
+    struct bgPids *pidHead = NULL;
+    struct bgPids *pidTail = NULL;
 
     while (1) {
         char *buf = NULL;
@@ -205,7 +230,14 @@ int main()
         }
 
         if (strcmp(userInput, "status") == 0 || strcmp(userInput, "status &") == 0) {
-            printf("exit status %d\n", exitStatus);
+            if (WIFEXITED(childExitMethod)) {
+                int exitStatus = WEXITSTATUS(childExitMethod);
+                printf("exit value %d\n", exitStatus);
+            }
+            else {
+                printf("child terminated by signal\n");
+            }
+            // printf("exit status %d\n", childExitMethod);
             continue;
         }
 
@@ -218,18 +250,44 @@ int main()
         // This is why "cd <some file path" still triggers this condition
         if (strcmp(userInput, "cd") == 0) {
             changeDirectory(commandPrompt, HOME);
+            printf("\n");
             continue;
         }
         // printArgs(commandPrompt);
         int argCount = countArgs(commandPrompt);
-        printf("arg count: %d\n", argCount);
+        // printf("arg count: %d\n", argCount);
         char *args[argCount+1];
         args[argCount] = NULL;
+
+        struct command *argsHead = commandPrompt;
+
+        // Checks that the & symbol is present and in the correct position.
+        while (argsHead != NULL) {
+            if (strcmp(argsHead->argument, "&") == 0 && argsHead->next == NULL) {
+                background = true;
+            }
+            argsHead = argsHead->next;
+        }   
 
         // int childStatus;
 
         // Fork a new process
         pid_t spawnPid = fork();
+
+
+        // THIS WONT WORK!!!!!!!!!!!! NEED NEW SOLUTION
+        if (background) {
+            struct bgPids *newNode = createPidNode(spawnPid);
+
+            if (pidHead == NULL) {
+                pidHead = newNode;
+                pidTail = newNode;
+            }
+            else {
+                pidTail->next = newNode;
+                pidTail = newNode;
+            }
+        }
 
         switch(spawnPid){
         case -1:
@@ -238,16 +296,15 @@ int main()
             break;
         case 0:
             // In the child process
-            printf("CHILD(%d) running\n", getpid());
+            // printf("CHILD(%d) running\n", getpid());
 
             listToArr(commandPrompt, args);
             
             for (int i=0; i < argCount; i++) {
-                printf("%s, ", args[i]);
-
+                // printf("%s, ", args[i]);
                 // stdin redirection
                 if (strcmp(args[i], "<") == 0) {
-                    redirect = true;
+                    sourceRedirect = true;
 
                     sourceFD = open(args[i+1], O_RDONLY);
                     if (sourceFD == -1) {
@@ -264,7 +321,7 @@ int main()
 
                 // stdout redirection
                 if (strcmp(args[i], ">") == 0) {
-                    redirect = true;
+                    targetRedirect = true;
 
                     targetFD = open(args[i+1], O_WRONLY | O_CREAT | O_TRUNC, 0644);
                     if (targetFD == -1) {
@@ -280,28 +337,78 @@ int main()
                 }
             }
 
-            printf("NULL\n");
-            printf("argument run: %s\n", args[0]);
+            // printf("NULL\n");
+            // printf("argument run: %s\n", args[0]);
             // // Replace the current program with "/bin/ls"
             // execl("/bin/ls", "/bin/ls", "-al", NULL);
-            if (redirect) {
+            if (sourceRedirect || targetRedirect) {
                 for ( int i = 1; i < argCount; i++) {
                     args[i] = NULL;
                 }
+            }
+             
+            if (!sourceRedirect && background){
+                sourceFD = open("/dev/null", O_RDONLY);
+                if (sourceFD == -1) {
+                    perror("source open()");
+                    exit(1);
+                }
+                int result = dup2(sourceFD, 0); // 0 == stdin
+                if (result == -1) {
+                    perror("source dup2()");
+                    exit(2);
+                }                 
+            }
+            if (!targetRedirect && background){
+                targetFD = open("/dev/null", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+                if (targetFD == -1) {
+                    perror("source open()");
+                    exit(1);
+                }
+                int result = dup2(targetFD, 1); // 1 == stdout
+                if (result == -1) {
+                    perror("source dup2()");
+                        exit(2);
+                    }                
             }
 
             execvp(args[0], args);
     
             // exec only returns if there is an error
             perror("execvp");
-            exitStatus = -1;
+            childExitMethod = -1;
             exit(2);
             break;
         default:
+            if (background) {
+                printf("background pid is %ld\n", (long) spawnPid);
+                background = false;
+            }
+            else {
+                spawnPid = waitpid(spawnPid, &childExitMethod, 0);
+            }
+            
+            struct bgPids *current = pidHead;
+            while (current != NULL) {
+                printf("bg pid: %ld\n", (long) current->spawnPid);
+                childPid = waitpid(current->spawnPid, &childExitMethod, WNOHANG);
+                if (childPid == -1){
+                    perror("background process");
+                    exit(2);
+                }
+                // process still running
+                if (childPid != 0) {
+                    if (WIFEXITED(childExitMethod)) {
+                        printf("background pid %ld is done: exit value %d\n", (long) childPid, WEXITSTATUS(childExitMethod));
+                    } else {
+                        printf("background pid %ld is done: terminated by signal %d\n", (long) childPid, WTERMSIG(childExitMethod));
+                    }
+                }
+                current = current->next;
+            }            
             // In the parent process
             // Wait for child's termination
-            spawnPid = waitpid(spawnPid, &exitStatus, 0);
-            printf("PARENT(%d): child(%d) terminated. Exiting\n", getpid(), spawnPid);
+            // printf("PARENT(%d): child(%d) terminated. Exiting\n", getpid(), spawnPid);
             // exit(0);
             // break;
         }

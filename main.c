@@ -17,11 +17,6 @@ struct command
     struct command *next;
 };
 
-struct bgPids 
-{
-    pid_t spawnPid;
-    struct bgPids *next;
-};
 // Citation for the following function:
 // Date: 01/20/2022
 // Copied from /OR/ Adapted from /OR/ Based on:
@@ -181,20 +176,18 @@ void listToArr(struct command *current, char **list)
 {   
     int i = 0;
     while (current != NULL) {
+        if ((strcmp(list[i-1], "&") == 0) && current->next == NULL) {
+            printf("bg fnd\n");
+        }
         list[i] = current->argument;
         i++;
         current = current->next;
     }
+    // if ((strcmp(list[i-1], "&") == 0) && current->next == NULL) {
+    //     list[i-1] = NULL;
+    // }
 }
 
-struct bgPids *createPidNode(pid_t pid)
-{
-    struct bgPids *currPid = malloc(sizeof(struct bgPids));
-    currPid->spawnPid = pid;
-    currPid->next = NULL;
-
-    return currPid;
-}
 
 // source for redirect: https://canvas.oregonstate.edu/courses/1884946/pages/exploration-processes-and-i-slash-o?module_item_id=21835982
 int main()
@@ -202,7 +195,6 @@ int main()
     char userInput[2048];
     char HOME[] = "/nfs/stak/users/bowdenn";
     pid_t pid = getpid();
-    pid_t childPid;
     struct command *commandPrompt;
     int childExitMethod = 0;
     int targetFD = -5;
@@ -211,8 +203,6 @@ int main()
     bool sourceRedirect = false;
     bool background = false;
 
-    struct bgPids *pidHead = NULL;
-    struct bgPids *pidTail = NULL;
 
     while (1) {
         char *buf = NULL;
@@ -231,11 +221,10 @@ int main()
 
         if (strcmp(userInput, "status") == 0 || strcmp(userInput, "status &") == 0) {
             if (WIFEXITED(childExitMethod)) {
-                int exitStatus = WEXITSTATUS(childExitMethod);
-                printf("exit value %d\n", exitStatus);
+                printf("exit value %d\n", WEXITSTATUS(childExitMethod));
             }
             else {
-                printf("child terminated by signal\n");
+                printf("child terminated by signal %d\n", WTERMSIG(childExitMethod));
             }
             // printf("exit status %d\n", childExitMethod);
             continue;
@@ -269,25 +258,8 @@ int main()
             argsHead = argsHead->next;
         }   
 
-        // int childStatus;
-
         // Fork a new process
         pid_t spawnPid = fork();
-
-
-        // THIS WONT WORK!!!!!!!!!!!! NEED NEW SOLUTION
-        if (background) {
-            struct bgPids *newNode = createPidNode(spawnPid);
-
-            if (pidHead == NULL) {
-                pidHead = newNode;
-                pidTail = newNode;
-            }
-            else {
-                pidTail->next = newNode;
-                pidTail = newNode;
-            }
-        }
 
         switch(spawnPid){
         case -1:
@@ -295,6 +267,7 @@ int main()
             exit(1);
             break;
         case 0:
+        {}
             // In the child process
             // printf("CHILD(%d) running\n", getpid());
 
@@ -371,6 +344,11 @@ int main()
                         exit(2);
                     }                
             }
+            printf("last arg: %s\n", args[argCount-1]);
+
+            if (strcmp(args[argCount-1], "&") == 0) {
+                args[argCount-1] = NULL;
+            }
 
             execvp(args[0], args);
     
@@ -379,42 +357,31 @@ int main()
             childExitMethod = -1;
             exit(2);
             break;
-        default:
+        default: 
+        {
             if (background) {
                 printf("background pid is %ld\n", (long) spawnPid);
                 background = false;
             }
             else {
                 spawnPid = waitpid(spawnPid, &childExitMethod, 0);
-            }
-            
-            struct bgPids *current = pidHead;
-            while (current != NULL) {
-                printf("bg pid: %ld\n", (long) current->spawnPid);
-                childPid = waitpid(current->spawnPid, &childExitMethod, WNOHANG);
-                if (childPid == -1){
-                    perror("background process");
-                    exit(2);
-                }
-                // process still running
-                if (childPid != 0) {
-                    if (WIFEXITED(childExitMethod)) {
-                        printf("background pid %ld is done: exit value %d\n", (long) childPid, WEXITSTATUS(childExitMethod));
-                    } else {
-                        printf("background pid %ld is done: terminated by signal %d\n", (long) childPid, WTERMSIG(childExitMethod));
+
+                while (spawnPid != -1) {
+                    spawnPid = waitpid(-1, &childExitMethod, WNOHANG);
+                    if (WIFEXITED(childExitMethod) && spawnPid > 0) {
+                        printf("background pid %d is done: exit value %d\n", spawnPid, WEXITSTATUS(childExitMethod));
+                    }
+                    else if (WIFSIGNALED(childExitMethod) && spawnPid > 0 ) {
+                        printf("background pid %d is done: terminated by signal %d\n", spawnPid, WTERMSIG(childExitMethod));
                     }
                 }
-                current = current->next;
-            }            
-            // In the parent process
-            // Wait for child's termination
-            // printf("PARENT(%d): child(%d) terminated. Exiting\n", getpid(), spawnPid);
-            // exit(0);
-            // break;
+            }
         }
-        
     }
+        
+}
     freeCommand(commandPrompt);
+    fflush(stdout);
     exit(0);
     return EXIT_SUCCESS;
 }

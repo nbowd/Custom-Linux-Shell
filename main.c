@@ -9,6 +9,9 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include <sys/wait.h> // for waitpid
+#include <signal.h>
+
+bool fgOnly = false;
 
 struct command 
 {
@@ -125,6 +128,7 @@ bool checkValid(struct command *head)
 {
     if (head == NULL) {
         printf("\n");
+        fflush(stdout);
         return false;
     }
         
@@ -132,6 +136,7 @@ bool checkValid(struct command *head)
     // printf("%c\n", firstArg[0]);
     if (firstArg[0] == '#') {
         printf("\n");
+        fflush(stdout);
         return false;
     }
     return true;
@@ -176,9 +181,6 @@ void listToArr(struct command *current, char **list)
 {   
     int i = 0;
     while (current != NULL) {
-        if ((strcmp(list[i-1], "&") == 0) && current->next == NULL) {
-            printf("bg fnd\n");
-        }
         list[i] = current->argument;
         i++;
         current = current->next;
@@ -188,6 +190,22 @@ void listToArr(struct command *current, char **list)
     // }
 }
 
+void handle_SIGTSTP(int signo){
+    if (fgOnly) {
+        char *message = "Exiting foreground-only mode\n: ";
+        fgOnly = false;
+        write(STDOUT_FILENO, message, 32);
+    }
+    else
+    {
+	    char* message = "Entering foreground-only mode (& is now ignored)\n: ";
+	    // We are using write rather than printf
+	    fgOnly = true;
+	    write(STDOUT_FILENO, message, 52);
+    }
+    // char *message = "you made it! \n: ";
+    // write(STDOUT_FILENO, message,17);
+}
 
 // source for redirect: https://canvas.oregonstate.edu/courses/1884946/pages/exploration-processes-and-i-slash-o?module_item_id=21835982
 int main()
@@ -203,6 +221,28 @@ int main()
     bool sourceRedirect = false;
     bool background = false;
 
+    // Initialize sigint struct to be empty
+    struct sigaction SIGINT_action = {0}, SIGTSTP_action = {0};
+
+    // ignore sigint
+    // SIGINT_action.sa_handler = handle_SIGINT;
+    SIGINT_action.sa_handler = SIG_IGN;
+    // Block all catchable signals while running;
+    sigfillset(&SIGINT_action.sa_mask);
+    // No flags set
+    SIGINT_action.sa_flags = 0;
+    // Install signal handler
+    sigaction(SIGINT, &SIGINT_action, NULL);
+
+
+    // Replace SIGSTP with new function
+    SIGTSTP_action.sa_handler = handle_SIGTSTP;
+    // Block all catchable signals while running;
+    sigfillset(&SIGTSTP_action.sa_mask);
+    // No flags set
+    SIGTSTP_action.sa_flags = SA_RESTART;
+    // Install signal handler
+    sigaction(SIGTSTP, &SIGTSTP_action, NULL);
 
     while (1) {
         char *buf = NULL;
@@ -222,9 +262,12 @@ int main()
         if (strcmp(userInput, "status") == 0 || strcmp(userInput, "status &") == 0) {
             if (WIFEXITED(childExitMethod)) {
                 printf("exit value %d\n", WEXITSTATUS(childExitMethod));
+                fflush(stdout);
+
             }
             else {
                 printf("child terminated by signal %d\n", WTERMSIG(childExitMethod));
+                fflush(stdout);
             }
             // printf("exit status %d\n", childExitMethod);
             continue;
@@ -240,6 +283,7 @@ int main()
         if (strcmp(userInput, "cd") == 0) {
             changeDirectory(commandPrompt, HOME);
             printf("\n");
+            fflush(stdout);
             continue;
         }
         // printArgs(commandPrompt);
@@ -253,7 +297,9 @@ int main()
         // Checks that the & symbol is present and in the correct position.
         while (argsHead != NULL) {
             if (strcmp(argsHead->argument, "&") == 0 && argsHead->next == NULL) {
-                background = true;
+                if (!fgOnly) {
+                    background = true;
+                }
             }
             argsHead = argsHead->next;
         }   
@@ -267,7 +313,14 @@ int main()
             exit(1);
             break;
         case 0:
-        {}
+        {   
+            // Foreground child will terminate itself if SIGINT signal is recieved
+            if (!background) {
+                // Change signal handler to default settings
+                SIGINT_action.sa_handler = SIG_DFL;
+                // Reinstall signal handler
+                sigaction(SIGINT, &SIGINT_action, NULL);
+            }
             // In the child process
             // printf("CHILD(%d) running\n", getpid());
 
@@ -344,9 +397,11 @@ int main()
                         exit(2);
                     }                
             }
-            printf("last arg: %s\n", args[argCount-1]);
 
-            if (strcmp(args[argCount-1], "&") == 0) {
+            if (background && strcmp(args[argCount-1], "&") == 0) {
+                args[argCount-1] = NULL;
+            }
+            if (fgOnly && strcmp(args[argCount-1], "&") == 0) {
                 args[argCount-1] = NULL;
             }
 
@@ -357,22 +412,38 @@ int main()
             childExitMethod = -1;
             exit(2);
             break;
+        }
         default: 
         {
             if (background) {
                 printf("background pid is %ld\n", (long) spawnPid);
+                fflush(stdout);
                 background = false;
             }
             else {
                 spawnPid = waitpid(spawnPid, &childExitMethod, 0);
+                
+                // Check if child process was killed by a signal, prints signal number
+                if (WIFSIGNALED(childExitMethod) && spawnPid > 0 ) {
+                    printf("terminated by signal %d\n", WTERMSIG(childExitMethod));
+                    fflush(stdout);
 
-                while (spawnPid != -1) {
+                }                
+
+                // SpawnPid returns 0 while running,
+                // It returns the pid once when completed,
+                // It returns -1, if pid value has been read and process has been cleaned up
+                // while (spawnPid != -1) {
+                while (spawnPid > 0) {
                     spawnPid = waitpid(-1, &childExitMethod, WNOHANG);
                     if (WIFEXITED(childExitMethod) && spawnPid > 0) {
                         printf("background pid %d is done: exit value %d\n", spawnPid, WEXITSTATUS(childExitMethod));
+                        fflush(stdout);
+
                     }
                     else if (WIFSIGNALED(childExitMethod) && spawnPid > 0 ) {
                         printf("background pid %d is done: terminated by signal %d\n", spawnPid, WTERMSIG(childExitMethod));
+                        fflush(stdout);
                     }
                 }
             }

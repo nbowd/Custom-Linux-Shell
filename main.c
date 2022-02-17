@@ -11,7 +11,7 @@
 #include <sys/wait.h> 
 #include <signal.h>
 
-// Foreground-only status, declared globally so it doesn't need to be passed around
+// Foreground-only status
 bool fgOnly = false;
 
 // Linked list to store the the tokenized command string
@@ -21,14 +21,11 @@ struct command
     struct command *next;
 };
 
-// Citation for the following function:
-// Date: 01/20/2022
-// Copied from /OR/ Adapted from /OR/ Based on:
-// Source: https://stackoverflow.com/questions/8257714/how-to-convert-an-int-to-string-in-c
-
-// Expands an argument to insert the parent pid to replace any instance of "$$" in a command.
-// Receives the command string to be expanded, the substring to be replaced, and the pid to be insterted.
-void expandVar(char *source, char *substring, pid_t pid)
+/* 
+    Expands an argument to insert the parent pid to replace any instance of "$$" in a command.
+    Receives the command string to be expanded and the pid to be insterted. 
+*/
+void expandVar(char *source, pid_t pid)
 {
     // Create temp storage for substring 
     int length = snprintf(NULL, 0, "%d", pid);
@@ -38,7 +35,7 @@ void expandVar(char *source, char *substring, pid_t pid)
     snprintf(str, length + 1, "%d", pid);
     
     // Locates expansion starting point
-    char *substring_source = strstr(source, substring);
+    char *substring_source = strstr(source, "$$");
 
     // Handles invalid strings
     if (substring_source == NULL) {
@@ -49,8 +46,8 @@ void expandVar(char *source, char *substring, pid_t pid)
     // This will leave a hole in the string that will be the right size for the new substring
     memmove(
         substring_source + strlen(str),
-        substring_source + strlen(substring),
-        strlen(substring_source) - strlen(substring) + 1
+        substring_source + 2,
+        strlen(substring_source) - 1
     );
     
     // Copies pid value into string
@@ -58,9 +55,11 @@ void expandVar(char *source, char *substring, pid_t pid)
     free(str);
 }
 
-// Creates an individual node for the command linked list
-// Allocates space dynamically for each argument
-// Expands any instance of "$$" to be replaced with the current pid
+/*
+    Creates an individual node for the command linked list
+    Allocates space dynamically for each argument
+    Checks and expands any instance of "$$" to be replaced with the current pid
+*/
 struct command *createCommand(char *arg, pid_t currentPid)
 {
     struct command *currCommand = malloc(sizeof(struct command));
@@ -73,7 +72,7 @@ struct command *createCommand(char *arg, pid_t currentPid)
     // Checks for expansion shortcut
     // Modifies newArg to reflect the expanded argument
     if (strstr(arg, "$$") != NULL) {
-        expandVar(newArg, "$$", currentPid);
+        expandVar(newArg, currentPid);
     }
 
     currCommand->argument = calloc(strlen(newArg) + 1, sizeof(char));
@@ -84,24 +83,29 @@ struct command *createCommand(char *arg, pid_t currentPid)
     return currCommand;
 }
 
-// Tokenizes the userInput string to create a linked list.
-// Breaks up string using spaces to separate commands.
-// Returns the head of the LL when completed.
+/* 
+    Tokenizes the userInput string to create a linked list.
+    Breaks up string using spaces to separate commands.
+    Returns the head of the LL when completed.
+*/
 struct command *parseInput(char userInput[], pid_t currentPid)
 {
     struct command *head = NULL;
     struct command *tail = NULL;
 
+    // token separator
     char *arg = strtok(userInput, " ");
 
     while (arg != NULL) {
         struct command *newArg = createCommand(arg, currentPid);
+        
+        // Empty list, add first node
         if (head == NULL) 
         {
             head = newArg;
             tail = newArg;
         } 
-        else
+        else // the subsequent nodes
         {
             tail->next = newArg;
             tail = newArg;
@@ -131,31 +135,31 @@ void freeCommand(struct command *head)
     }
 }
 
-// Checks for blank input or comment line
-// If either are present, returns false; else returns true.
+/* 
+    Checks for blank input or comment line
+    If either are present, returns false; else returns true.
+*/
 bool checkValid(struct command *head)
 {
     // Blank line
     if (head == NULL) {
-        printf("\n");
-        fflush(stdout);
         return false;
     }
     
     // Comment line
     char *firstArg = head->argument;
     if (firstArg[0] == '#') {
-        printf("\n");
-        fflush(stdout);
         return false;
     }
     return true;
 }
 
-// Built-in command: changes directory of parent process. 
-// Takes at most one additional argument: the path to change to using absolute or relative paths.
-// If no additional argument is provided then it will change to the default home directory.
-// This argument cannot be run in the background.
+/* 
+    Built-in command: changes directory of parent process. 
+    Takes at most one additional argument: the path to change to using absolute or relative paths.
+    If no additional argument is provided then it will change to the default home directory.
+    This argument cannot be run in the background.
+*/
 void changeDirectory(struct command *current, char HOME[]) 
 {
     // Checks for an argument, advances command
@@ -163,7 +167,7 @@ void changeDirectory(struct command *current, char HOME[])
 
     // No argument, navigates to HOME directory
     if (current == NULL) {
-        chdir(HOME);
+        chdir(getenv("HOME"));
         return;
     }
 
@@ -173,9 +177,10 @@ void changeDirectory(struct command *current, char HOME[])
         perror("Invalid argument, cd not executed");
     }
 }
-
-// Counts the number of arguments in a command,
-// returns that number as an int.
+/*
+    Counts the number of arguments in a command,
+    returns that number as an int.
+*/
 int countArgs(struct command *head) 
 {
     int count = 0;
@@ -187,9 +192,11 @@ int countArgs(struct command *head)
     return count;
 }
 
-// Parses linked list into arguments list
-// This list is needed to execute the exec() family functions
-// An empty list of the correct size is required.
+/*
+    Parses linked list into arguments list
+    This list is needed to execute the exec() family functions
+    An empty list of the correct size is required.
+*/
 void listToArr(struct command *current, char **list)
 {   
     int i = 0;
@@ -199,15 +206,11 @@ void listToArr(struct command *current, char **list)
         current = current->next;
     }
 }
-
-// Citation for the following function:
-// Date: 02/05/2022
-// Copied from /OR/ Adapted from /OR/ Based on:
-// Source: https://canvas.oregonstate.edu/courses/1884946/pages/exploration-signal-handling-api?module_item_id=21835981
-
-// Custom signal handler for SIGTSTP (Ctrl + z)
-// Toggles foreground-only mode.
-// When toggled on, no background commands can be run (& is ignored)
+/*
+    Custom signal handler for SIGTSTP (Ctrl + z)
+    Toggles foreground-only mode.
+    When toggled on, no background commands can be run (& is ignored)
+*/
 void handle_SIGTSTP(int signo){
     if (fgOnly) {
         char *message = "Exiting foreground-only mode\n: ";
@@ -223,28 +226,19 @@ void handle_SIGTSTP(int signo){
 
 }
 
-// This function is way to large and not structered well. I plan to properly organize it before showcasing it
-// It works as it is right now, so I don't want to risk regression at the last minute. I'm honestly already super proud that I got it to this point, I wasn't sure if it would come together.
-
-/* Citation for the following function:
-    Date: 02/05/2022
-    Copied from /OR/ Adapted from /OR/ Based on:
-    source for redirect: https://canvas.oregonstate.edu/courses/1884946/pages/exploration-processes-and-i-slash-o?module_item_id=21835982
-    source for signals: https://canvas.oregonstate.edu/courses/1884946/pages/exploration-signal-handling-api?module_item_id=21835981
-*/
 int main()
 {
     char userInput[2048];
     struct command *commandPrompt;
 
-    // os1 home
-    char HOME[] = "/nfs/stak/users/bowdenn";
     // Parent shell pid
     pid_t pid = getpid();
 
-    // Used for redirection
+    // Redirection:
+    // Status
     int targetFD = -5;
     int sourceFD = -5;
+    // Indicator
     bool targetRedirect = false;
     bool sourceRedirect = false;
 
@@ -255,7 +249,7 @@ int main()
     // Initialize both sigint and sigtstp structs to be empty
     struct sigaction SIGINT_action = {0}, SIGTSTP_action = {0};
 
-    // Ignore SIGINT
+    // Ignore SIGINT globally, will restore for foreground mode.
     SIGINT_action.sa_handler = SIG_IGN;
     // Block all catchable signals while running;
     sigfillset(&SIGINT_action.sa_mask);
@@ -264,10 +258,9 @@ int main()
     // Install signal handler
     sigaction(SIGINT, &SIGINT_action, NULL);
 
-
-    // Handle SIGSTP with new function
+    // Handle SIGSTP with custom function
     SIGTSTP_action.sa_handler = handle_SIGTSTP;
-    // Block all catchable signals while running;
+    // Block all catchable signals while running
     sigfillset(&SIGTSTP_action.sa_mask);
     // No flags set
     SIGTSTP_action.sa_flags = SA_RESTART;
@@ -501,8 +494,7 @@ int main()
         
 }
     freeCommand(commandPrompt);
-    printf("\n");
     fflush(stdout);
-    exit(0);
     return EXIT_SUCCESS;
+
 }

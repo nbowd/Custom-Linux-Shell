@@ -160,7 +160,7 @@ bool checkValid(struct command *head)
     If no additional argument is provided then it will change to the default home directory.
     This argument cannot be run in the background.
 */
-void changeDirectory(struct command *current, char HOME[]) 
+void changeDirectory(struct command *current) 
 {
     // Checks for an argument, advances command
     current = current->next;
@@ -226,10 +226,108 @@ void handle_SIGTSTP(int signo){
 
 }
 
+/*
+    Prompts user with ": " and saves the retrieved input to the userInput array passed in.
+    Clears value currently stored in userInput before copying over value
+*/
+void getCommand(char userInput[])
+{
+    // Retrieve user input by prompting ": "
+    char *buf = NULL;
+    size_t buflen;
+    printf(": ");
+    fflush(stdout);
+    getline(&buf, &buflen, stdin);
+
+    buf[strlen(buf)-1] = '\0'; // trims \n from input
+
+    // transfer value of cleaned up buffer to correct location
+    memset(userInput, '\0', 2048);
+    strcpy(userInput, buf);
+    free(buf);    
+}
+
+/*
+    BUILT-IN COMMAND: exit
+    On exit command, breaks input loop and returns true
+    else returns false
+    Cannot be run in the background.
+*/ 
+bool handleExit(char userInput[])
+{
+    if (strcmp(userInput, "exit") == 0 || strcmp(userInput, "exit &") == 0) {
+        return true;
+    }
+    return false;  // else
+}
+
+/*
+    BUILT-IN COMMAND: status
+    Checks last exit method of child process, prints decoded value and returns true
+    returns false for all other commands
+    Cannot be run in the background
+*/ 
+bool handleStatus(char userInput[], int childExitMethod)
+{
+    if (strcmp(userInput, "status") == 0 || strcmp(userInput, "status &") == 0) {
+        if (WIFEXITED(childExitMethod)) {
+            printf("exit value %d\n", WEXITSTATUS(childExitMethod));
+            fflush(stdout);
+        }
+        else {
+            printf("terminated by signal %d\n", WTERMSIG(childExitMethod));
+            fflush(stdout);
+        }
+        return true;
+    }
+    return false;    
+}
+
+/*
+    BUILT-IN COMMAND: cd
+    Changes directory of the current process, 
+    accepts up to 1 additional argument: the target directory (relative or absolute path)
+    If no additional argument, changes to HOME directory by default.
+    Returns true on command execution, false otherwise.
+*/ 
+bool handleCD(char userInput[], struct command *parsedCommand) 
+{
+    // After parsing, only the command is left inside userInput.
+    // This is why "cd <some file path>" still triggers this condition
+    if (strcmp(userInput, "cd") == 0) {
+        changeDirectory(parsedCommand);
+        return true;
+    }
+    return false;
+}
+
+/*
+    Checks each user input for the symbol ("&") to indicate that the current command should be run in the background.
+    Background symbol must be the last argument in the command input to be valid.
+    Sets background variable to true for valid background symbol placement.
+*/ 
+void checkBgCommand(struct command *parsedCommand, bool background) 
+{
+    // temp pointer to check for background symbol
+    struct command *argsHead = parsedCommand;
+
+    // Checks that the & symbol is present and in the correct position.
+    while (argsHead != NULL) {
+        if (strcmp(argsHead->argument, "&") == 0 && argsHead->next == NULL) {
+            // Does not set background flag is fgOnly is active
+            if (!fgOnly) {
+                background = true;
+            }
+        }
+        argsHead = argsHead->next;
+    }
+            
+}
+
 int main()
 {
     char userInput[2048];
-    struct command *commandPrompt;
+    struct command *parsedCommand;
 
     // Parent shell pid
     pid_t pid = getpid();
@@ -268,73 +366,33 @@ int main()
     sigaction(SIGTSTP, &SIGTSTP_action, NULL);
 
     while (1) {
-        // Retrieve user input by prompting ": "
-        char *buf = NULL;
-        size_t buflen;
-        printf(": ");
-        fflush(stdout);
-        getline(&buf, &buflen, stdin);
 
-        buf[strlen(buf)-1] = '\0'; // trims \n from input
+        getCommand(userInput);
 
-        // transfer value of cleaned up buffer to correct location
-        memset(userInput, '\0', 2048);
-        strcpy(userInput, buf);
-        free(buf);
+        // Parses the command and arguments into a linked list inside the command struct
+        parsedCommand = parseInput(userInput, pid);
 
-        // BUILT-IN COMMAND: exit
-        // Breaks loop where memory is freed and exit(0) is called
-        // Cannot be run in the background
-        if (strcmp(userInput, "exit") == 0 || strcmp(userInput, "exit &") == 0) {
+        // Verifies valid input, will not progress until so
+        bool valid = checkValid(parsedCommand);
+        if (!valid) {continue;} // reprompts until valid command
+
+        if (handleExit(userInput)) {
             break;
         }
 
-        // BUILT-IN COMMAND: status
-        // Checks last exit method of child process, prints decoded value
-        // Cannot be run in the background
-        if (strcmp(userInput, "status") == 0 || strcmp(userInput, "status &") == 0) {
-            if (WIFEXITED(childExitMethod)) {
-                printf("exit value %d\n", WEXITSTATUS(childExitMethod));
-                fflush(stdout);
-            }
-            else {
-                printf("terminated by signal %d\n", WTERMSIG(childExitMethod));
-                fflush(stdout);
-            }
+        if (handleStatus(userInput, childExitMethod)) {
             continue;
         }
 
-        // Parses the command and arguments into a linked list inside the command struct
-        commandPrompt = parseInput(userInput, pid);
-        bool valid = checkValid(commandPrompt);
-        if (!valid) {continue;} // reprompts until valid command
-
-        // After parsing, only the command is left inside userInput.
-        // This is why "cd <some file path>" still triggers this condition
-        if (strcmp(userInput, "cd") == 0) {
-            changeDirectory(commandPrompt, HOME);
-            printf("\n");
-            fflush(stdout);
+        if (handleCD(userInput, parsedCommand)) {
             continue;
         }
         // Initialize args array
-        int argCount = countArgs(commandPrompt);
+        int argCount = countArgs(parsedCommand);
         char *args[argCount+1];
         args[argCount] = NULL;
 
-        // temp pointer to check for background symbol
-        struct command *argsHead = commandPrompt;
-
-        // Checks that the & symbol is present and in the correct position.
-        while (argsHead != NULL) {
-            if (strcmp(argsHead->argument, "&") == 0 && argsHead->next == NULL) {
-                // Does not set background flag is fgOnly is active
-                if (!fgOnly) {
-                    background = true;
-                }
-            }
-            argsHead = argsHead->next;
-        }   
+        checkBgCommand(parsedCommand, background);
 
         // Fork a new process
         pid_t spawnPid = fork();
@@ -358,7 +416,7 @@ int main()
             }
 
             // Convert LL to arr for exec()
-            listToArr(commandPrompt, args);
+            listToArr(parsedCommand, args);
             
             // Checks for input/output redirection
             for (int i=0; i < argCount; i++) {
@@ -493,7 +551,7 @@ int main()
     }
         
 }
-    freeCommand(commandPrompt);
+    freeCommand(parsedCommand);
     fflush(stdout);
     return EXIT_SUCCESS;
 
